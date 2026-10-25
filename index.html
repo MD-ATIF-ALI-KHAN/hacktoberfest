@@ -62,6 +62,20 @@ main{display:flex;flex-direction:column;gap:14px;min-width:0}
 }
 .answer.quiet{color:var(--dim);font-size:16px;line-height:1.55;letter-spacing:0;border-left-color:var(--line2)}
 
+/* verdict + advice: what it sees, then what to do about it */
+.verdict{font-family:var(--mono);font-size:13.5px;letter-spacing:.2em;font-weight:500;
+  padding:11px 16px;border-radius:11px;text-align:center;border:1px solid var(--line2);
+  color:var(--dim);background:var(--bg2)}
+.verdict.clear  {background:rgba(91,214,168,.13);color:var(--accent);border-color:var(--accent-dim)}
+.verdict.caution{background:rgba(240,180,87,.13);color:var(--warn);border-color:#6b5120}
+.verdict.stop   {background:rgba(255,92,92,.16);color:#ff9a9a;border-color:#7d2c2c}
+.advice{display:flex;gap:11px;align-items:baseline;background:var(--bg2);
+  border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:12px;
+  padding:14px 17px;font-size:clamp(17px,2.2vw,21px);line-height:1.3}
+.advice::before{content:"DO";font-family:var(--mono);font-size:10.5px;letter-spacing:.17em;
+  color:var(--warn);flex:0 0 auto;position:relative;top:-2px}
+.advice[hidden]{display:none}   /* display:flex would otherwise beat the hidden attribute */
+
 /* ── controls ───────────────────────────────────────── */
 .actions{display:flex;gap:12px;flex-wrap:wrap}
 button{font-family:var(--display);font-size:16px;color:var(--fg);background:var(--bg3);
@@ -154,9 +168,13 @@ input[type=range]{width:100%;accent-color:var(--accent)}
 
 <div class="shell">
   <main>
-    <div class="answer quiet" id="say" role="status" aria-live="assertive" aria-atomic="true">
+    <div class="verdict" id="verdict" role="status" aria-live="assertive">READY</div>
+
+    <div class="answer quiet" id="say" role="status" aria-live="polite" aria-atomic="true">
       Add your Google AI Studio API key under Setup, then press Describe.
     </div>
+
+    <div class="advice" id="advice" role="status" aria-live="polite" hidden></div>
 
     <div class="actions">
       <button id="go">Describe what's ahead</button>
@@ -231,6 +249,7 @@ const camEl=$("#cam"), stage=$("#stage"), sayEl=$("#say"), liveDot=$("#livedot")
       goBtn=$("#go"), micBtn=$("#mic"), camSel=$("#camsel"), camRef=$("#camref"),
       famEl=$("#family"), dimsEl=$("#dims"), logList=$("#logList"),
       prioEl=$("#prio"), detailEl=$("#detail"),
+      verdictEl=$("#verdict"), adviceEl=$("#advice"),
       teleModel=$("#teleModel"), teleMs=$("#teleMs"), teleN=$("#teleN"),
       teleTtf=$("#teleTtf"), teleKb=$("#teleKb");
 
@@ -277,6 +296,23 @@ function show(text, quiet=false){
   sayEl.textContent = text;
   sayEl.classList.toggle("quiet", quiet);
 }
+
+const VERDICT = {
+  CLEAR:   { cls:"clear",   say:"Clear."   },
+  CAUTION: { cls:"caution", say:"Caution." },
+  STOP:    { cls:"stop",    say:"Stop."    }
+};
+function setVerdict(v){
+  const k = VERDICT[v] ? v : null;
+  verdictEl.className = "verdict" + (k ? " " + VERDICT[k].cls : "");
+  verdictEl.textContent = k || v || "—";
+  return k;
+}
+function setAdvice(text){
+  adviceEl.textContent = text || "";
+  adviceEl.hidden = !text;
+}
+function resetPanels(){ setVerdict(""); setAdvice(""); }
 
 /* Readings stay on screen so they can be replayed — a spoken answer is gone the
    moment it finishes, and asking the model again costs another request. */
@@ -437,24 +473,45 @@ discoverModels();
 /* ---------- prompt ---------- */
 const SYSTEM = [
   "You are the eyes of a blind person walking, seeing one frame from a camera on their chest.",
-  "Report only what is actually visible, most urgent first.",
-  "RULES:",
-  "- 15 words MAXIMUM. Telegraphic. No preamble, no 'I see', no pleasantries, no full sentences.",
-  "- Put the single most urgent thing in the FIRST three words.",
-  "- Lead with anything in the walking path: obstacle, step, kerb, stairs, pole, vehicle, person.",
-  "- Give direction (left, ahead, right) and rough distance in steps or metres: 'about three steps'.",
-  "- State height when not on the ground (knee, waist, chest, head height) — a cane never finds those.",
+  "Reply in EXACTLY three lines, nothing before or after:",
+  "ASSESS: CLEAR or CAUTION or STOP",
+  "SEE: what is actually visible, 12 words max, most urgent first",
+  "DO: what to do next, 8 words max, imperative",
+  "",
+  "ASSESS:",
+  "- STOP — obstacle within about two steps, a drop-off, stairs going down, or anything in the path.",
+  "- CAUTION — something in or near the path but there is room to pass, or you cannot see well.",
+  "- CLEAR — nothing in the walking column that you can see.",
+  "- Judge ONLY the walking surface visible in THIS frame.",
+  "",
+  "SEE:",
+  "- Telegraphic. No preamble, no 'I see'. Most urgent thing in the first three words.",
+  "- Direction (left, ahead, right) and rough distance in steps: 'about three steps'.",
+  "- Height band when not on the ground (knee, waist, chest, head) — a cane never finds those.",
   "- Read large or important text verbatim in quotes.",
-  "- Never say it is safe, clear, or fine to walk or cross. Never give go or no-go advice. Describe only.",
-  "- Never claim something is absent; you may have missed it.",
-  "- If too dark or blurred to judge, reply exactly: Can't see clearly."
+  "- Never claim something is absent; you may simply have missed it.",
+  "",
+  "DO:",
+  "- Concrete and physical: 'move left to pass', 'stop, step down', 'continue, keep right'.",
+  "- Advise only about fixed things you can see: obstacles, steps, kerbs, gaps, doors.",
+  "",
+  "TRAFFIC — absolute:",
+  "- If the frame shows a road, kerb, crossing, or ANY vehicle, ASSESS is CAUTION or STOP, never CLEAR,",
+  "  and DO must be exactly: wait, you need a person to help you cross.",
+  "- You cannot judge traffic. A vehicle outside this frame reaches the person in seconds.",
+  "- Never state that traffic is clear, that there are no cars, or that crossing is possible.",
+  "",
+  "If too dark or blurred: ASSESS: CAUTION / SEE: can't see clearly / DO: stop, try again."
 ].join("\n");
 
-// Hard guardrail: a hallucinated "path is clear" could put someone in traffic.
-const FORBIDDEN = /\b(it(?:'s| is) safe|safe to (?:walk|cross|go|proceed)|you can (?:cross|go|walk|proceed)|path is clear|all clear|nothing in your way|clear to (?:cross|go)|go ahead now)\b/i;
+/* The model may advise on fixed obstacles — that is the point of DO. What it must never
+   do is pronounce on traffic: it cannot see a car outside the frame, and in the seconds
+   between capture and speech that car has already arrived. Blocked in the prompt above
+   and again here, because a prompt is a request and this is a requirement. */
+const FORBIDDEN = /\b(safe to cross|okay to cross|ok to cross|clear to cross|you can cross|cross now|no cars|no traffic|traffic is clear|road is clear|no vehicles)\b/i;
 function guard(text){
   return FORBIDDEN.test(text)
-    ? text.replace(FORBIDDEN, "— I can't judge that").replace(/\s{2,}/g," ").trim()
+    ? text.replace(FORBIDDEN, "— I cannot judge traffic").replace(/\s{2,}/g," ").trim()
     : text;
 }
 
@@ -476,6 +533,7 @@ async function ask(question){
 
   busy = true; stage.classList.add("busy"); goBtn.disabled = true;
   speechSynthesis.cancel();
+  setVerdict("SCANNING"); setAdvice("");
   show("Looking…", true);
   teleTtf.textContent = "…"; teleMs.textContent = "…";
 
@@ -493,18 +551,28 @@ async function ask(question){
     generationConfig:{ temperature:0.1, topP:0.8, maxOutputTokens:48 }
   });
 
-  let full = "", spoken = 0, ttf = 0;
+  let full = "", done = 0, uttered = 0, ttf = 0, seen = "", advice = "";
 
-  // Speak each complete clause as it lands; force=true flushes the tail at the end.
+  // Speak each line the moment it completes. ASSESS is the first and shortest line,
+  // so the one word that matters most reaches the user soonest.
   const flush = force => {
-    const pending = full.slice(spoken);
-    if(!pending.trim()) return;
-    let cut = -1;
-    if(force) cut = pending.length;
-    else { const m = pending.match(/[.,!?;:\n](?=\s|$)/); if(m) cut = m.index + 1; }
-    if(cut > 0){
-      const chunk = pending.slice(0, cut).trim();
-      if(chunk){ speak(guard(chunk), spoken > 0); spoken += cut; }
+    const lines = full.split("\n");
+    const ready = force ? lines.length : lines.length - 1;
+    for(; done < ready; done++){
+      const line = lines[done].trim();
+      if(!line) continue;
+      const m = line.match(/^(ASSESS|SEE|DO)\s*:\s*(.*)$/i);
+      const key = m ? m[1].toUpperCase() : "";
+      const val = guard((m ? m[2] : line).trim());
+      if(!val) continue;
+      if(key === "ASSESS"){
+        const k = setVerdict(val.toUpperCase().replace(/[^A-Z]/g,""));
+        speak(k ? VERDICT[k].say : val, uttered++ > 0);
+      }else if(key === "DO"){
+        advice = val; setAdvice(val); speak(val, uttered++ > 0);
+      }else{
+        seen = val; show(val); speak(val, uttered++ > 0);
+      }
     }
   };
 
@@ -546,9 +614,12 @@ async function ask(question){
     const ms = Math.round(performance.now()-t0);
     reads++; stamp(ms);
 
-    const safe = guard(full.trim());
-    if(!safe){ show("No answer came back. Try again.", true); speak("No answer."); }
-    else { show(safe); logRead(safe, ms); }
+    if(!full.trim()){ show("No answer came back. Try again.", true); speak("No answer."); }
+    else{
+      if(!seen) show(guard(full.trim()));          // model ignored the format — show it raw
+      logRead([verdictEl.textContent, seen || full.trim(), advice && ("→ " + advice)]
+                .filter(Boolean).join("  ·  "), ms);
+    }
 
   }catch(err){
     if(err.name === "AbortError") return;
