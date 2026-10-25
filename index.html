@@ -1,0 +1,602 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Third Eye</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: main column carries the spoken answer; the camera docks right as a
+   vertical panel, matching the portrait column a chest-worn camera actually sees. */
+:root{
+  --bg:#07090c;        --bg2:#0d1116;      --bg3:#141a21;
+  --line:#1f2731;      --line2:#2b3542;
+  --fg:#eef3f8;        --dim:#8995a6;
+  --accent:#5bd6a8;    --accent-ink:#04140e;  --accent-dim:#1b5f49;
+  --warn:#f0b457;      --live:#ff5c5c;
+  --display:"Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{
+  background:
+    radial-gradient(90rem 50rem at 85% -10%, rgba(91,214,168,.09), transparent 60%),
+    radial-gradient(70rem 40rem at 5% 110%, rgba(91,214,168,.05), transparent 60%),
+    var(--bg);
+  color:var(--fg); font-family:var(--display); font-size:16px; line-height:1.5;
+  padding-left:max(18px, env(safe-area-inset-left,0px));
+  padding-right:max(18px, env(safe-area-inset-right,0px));
+  padding-block:16px;
+  display:flex; flex-direction:column; gap:16px;
+}
+
+/* ── header ─────────────────────────────────────────── */
+header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+.wordmark{font-size:19px;font-weight:700;letter-spacing:-.01em;margin:0}
+.wordmark span{color:var(--accent)}
+.tagline{font-size:13px;color:var(--dim)}
+.tagline b{color:var(--fg);font-weight:400}
+
+/* ── two-column shell ───────────────────────────────── */
+.shell{flex:1;min-height:0;display:grid;gap:16px;align-items:start;
+       grid-template-columns:minmax(0,1fr) 300px}
+@media (max-width:860px){ .shell{grid-template-columns:minmax(0,1fr)} }
+
+main{display:flex;flex-direction:column;gap:14px;min-width:0}
+
+/* ── the answer: the hero of the page ───────────────── */
+.answer{
+  flex:0 1 auto; min-height:168px; max-height:44vh; overflow-y:auto;
+  display:flex; align-items:center;
+  background:linear-gradient(180deg,var(--bg2),#0a0e12);
+  border:1px solid var(--line); border-left:3px solid var(--accent);
+  border-radius:14px; padding:22px 24px;
+  font-size:clamp(21px,3.4vw,31px); line-height:1.3; letter-spacing:-.015em;
+  text-wrap:balance;
+}
+.answer.quiet{color:var(--dim);font-size:16px;line-height:1.55;letter-spacing:0;border-left-color:var(--line2)}
+
+/* ── controls ───────────────────────────────────────── */
+.actions{display:flex;gap:12px;flex-wrap:wrap}
+button{font-family:var(--display);font-size:16px;color:var(--fg);background:var(--bg3);
+       border:1px solid var(--line2);border-radius:12px;padding:14px 18px;cursor:pointer;
+       min-height:50px;transition:border-color .15s,background .15s,transform .06s}
+button:hover:not(:disabled){border-color:var(--accent-dim);background:#18212a}
+button:active:not(:disabled){transform:translateY(1px)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+button:disabled{opacity:.4;cursor:default}
+
+#go{flex:1 1 260px;background:var(--accent);color:var(--accent-ink);border-color:var(--accent);
+    font-weight:700;font-size:21px;min-height:70px;letter-spacing:-.01em}
+#go:hover:not(:disabled){background:#6ee3b6;border-color:#6ee3b6}
+#mic{flex:0 1 170px;border-color:var(--accent-dim)}
+#mic.live{background:var(--warn);color:#1b1200;border-color:var(--warn);font-weight:700}
+
+.chips{display:flex;gap:9px;flex-wrap:wrap}
+.chip{font-size:14px;padding:10px 14px;min-height:42px;color:var(--dim);background:transparent;
+      border-radius:999px}
+.chip:hover:not(:disabled){color:var(--fg)}
+
+/* ── camera side panel ──────────────────────────────── */
+aside{display:flex;flex-direction:column;gap:11px;min-width:0}
+.panel-label{font-family:var(--mono);font-size:10.5px;letter-spacing:.17em;text-transform:uppercase;
+             color:var(--dim);display:flex;justify-content:space-between;align-items:center}
+.stage{position:relative;aspect-ratio:9/16;width:100%;max-height:56vh;margin-inline:auto;
+       background:#000;border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+@media (max-width:860px){ .stage{aspect-ratio:3/4;max-height:42vh;margin-inline:auto} }
+#cam{width:100%;height:100%;object-fit:cover;display:block}
+.stage::before{content:"";position:absolute;inset:0;pointer-events:none;
+  box-shadow:inset 0 0 60px rgba(0,0,0,.55);border-radius:14px}
+.stage.busy::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(180deg,transparent,rgba(91,214,168,.3),transparent);
+  animation:scan 1.2s ease-in-out infinite}
+@keyframes scan{from{transform:translateY(-100%)}to{transform:translateY(100%)}}
+.dot{position:absolute;top:11px;left:11px;display:flex;align-items:center;gap:6px;
+     font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:#fff;
+     background:rgba(0,0,0,.55);padding:4px 8px;border-radius:999px;backdrop-filter:blur(6px)}
+.dot i{width:6px;height:6px;border-radius:50%;background:var(--live);animation:pulse 1.6s infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){
+  .stage.busy::after{animation:none;opacity:.22} .dot i{animation:none}
+}
+
+.camrow{display:flex;gap:8px}
+select,input[type=password]{font-family:var(--display);font-size:14px;padding:11px 12px;
+  border-radius:10px;border:1px solid var(--line2);background:#0a0e13;color:var(--fg);width:100%}
+.camrow select{flex:1;min-width:0}
+.camrow button{flex:0 0 auto;padding:11px 13px;font-size:13.5px;min-height:0}
+select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.tele{font-family:var(--mono);font-size:11.5px;color:var(--dim);background:var(--bg2);
+      border:1px solid var(--line);border-radius:11px;padding:11px 13px;
+      display:flex;flex-direction:column;gap:5px}
+.tele div{display:flex;justify-content:space-between;gap:10px}
+.tele b{color:var(--fg);font-weight:500;font-variant-numeric:tabular-nums}
+.tele .ok{color:var(--accent)}
+
+/* ── setup ──────────────────────────────────────────── */
+/* ── recent readings ────────────────────────────────── */
+.log{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;gap:9px}
+.log ol{list-style:none;margin:0;padding:0;max-height:252px;overflow-y:auto;
+        display:flex;flex-direction:column;gap:7px}
+.log li{background:var(--bg2);border:1px solid var(--line);border-radius:10px;
+        padding:11px 13px;font-size:14.5px;display:flex;gap:12px;align-items:baseline;cursor:pointer}
+.log li:hover{border-color:var(--accent-dim)}
+.log li:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.log li.empty{color:var(--dim);cursor:default;font-size:13.5px;justify-content:center;
+              border-style:dashed;background:transparent}
+.log time,.log .ms{font-family:var(--mono);font-size:10.5px;color:var(--dim);flex:0 0 auto}
+.log p{margin:0;flex:1;min-width:0}
+
+details{background:var(--bg2);border:1px solid var(--line);
+        border-radius:12px;padding:12px 15px}
+summary{cursor:pointer;color:var(--dim);font-size:14px}
+summary:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+label{display:block;font-size:12.5px;color:var(--dim);margin:13px 0 6px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.note{font-size:12.5px;color:var(--dim);margin:11px 0 0;max-width:62ch}
+.note em{color:var(--fg);font-style:normal}
+.warn{color:var(--warn);opacity:.92}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 class="wordmark">Third <span>Eye</span></h1>
+  <p class="tagline">Sees further than a cane reaches &middot; powered by <b id="family">Gemma</b></p>
+</header>
+
+<div class="shell">
+  <main>
+    <div class="answer quiet" id="say" role="status" aria-live="assertive" aria-atomic="true">
+      Add your Google AI Studio API key under Setup, then press Describe.
+    </div>
+
+    <div class="actions">
+      <button id="go">Describe what's ahead</button>
+      <button id="mic">Hold to ask</button>
+    </div>
+
+    <div class="chips">
+      <button class="chip" data-q="Read every piece of text you can see, verbatim.">Read the text</button>
+      <button class="chip" data-q="What is directly in my walking path, and how far?">What's in my path?</button>
+      <button class="chip" data-q="Where is the door or entrance, and is there a step at it?">Find the door</button>
+      <button class="chip" data-q="Describe any steps, stairs, or kerbs and how many.">Steps or stairs?</button>
+    </div>
+
+    <section class="log" aria-label="Recent readings">
+      <div class="panel-label"><span>Recent readings</span><span>tap to replay</span></div>
+      <ol id="logList"><li class="empty">Readings will appear here.</li></ol>
+    </section>
+
+    <details>
+      <summary>Setup &amp; options</summary>
+      <label for="key">Google AI Studio API key — stays in this browser only</label>
+      <input id="key" type="password" placeholder="AIza…" autocomplete="off">
+      <label for="prio">Priority</label>
+      <select id="prio">
+        <option value="fast">Fastest — smallest model that can see</option>
+        <option value="best">Best quality — slowest</option>
+      </select>
+      <label for="model">Model</label>
+      <select id="model"><option value="">detecting…</option></select>
+      <label for="detail">Image detail — smaller is much faster</label>
+      <select id="detail">
+        <option value="384">Low — 384px (fastest)</option>
+        <option value="512">Medium — 512px</option>
+        <option value="768">High — 768px (slowest)</option>
+      </select>
+      <label for="rate">Speech rate — <span id="rateVal">1.4</span>&times;</label>
+      <input id="rate" type="range" min="0.8" max="3" step="0.1" value="1.4">
+      <p class="note">One key covers both families: the key from <em>aistudio.google.com/apikey</em>
+        serves Gemma <em>and</em> Gemini — there is no separate Gemma key, only a different model
+        name. A browser key is fine for a demo but must never ship in a real app.</p>
+      <p class="note warn">Assistive supplement only — never a replacement for a cane, guide dog, or
+        your own judgement. It will not tell you when it is safe to walk or cross.</p>
+    </details>
+  </main>
+
+  <aside>
+    <div class="panel-label"><span>Camera</span><span id="dims">—</span></div>
+    <div class="stage" id="stage">
+      <video id="cam" playsinline autoplay muted></video>
+      <span class="dot" id="livedot" hidden><i></i>LIVE</span>
+    </div>
+    <div class="camrow">
+      <select id="camsel" aria-label="Choose camera"><option value="">camera: default</option></select>
+      <button class="chip" id="camref" title="Rescan after connecting a camera">Rescan</button>
+    </div>
+    <div class="tele">
+      <div><span>model</span><b id="teleModel">—</b></div>
+      <div><span>first word</span><b id="teleTtf" class="ok">—</b></div>
+      <div><span>total</span><b id="teleMs">—</b></div>
+      <div><span>image</span><b id="teleKb">—</b></div>
+      <div><span>reads</span><b id="teleN">0</b></div>
+    </div>
+  </aside>
+</div>
+
+<script>
+"use strict";
+
+const $ = s => document.querySelector(s);
+const camEl=$("#cam"), stage=$("#stage"), sayEl=$("#say"), liveDot=$("#livedot"),
+      keyEl=$("#key"), modelEl=$("#model"), rateEl=$("#rate"), rateVal=$("#rateVal"),
+      goBtn=$("#go"), micBtn=$("#mic"), camSel=$("#camsel"), camRef=$("#camref"),
+      famEl=$("#family"), dimsEl=$("#dims"), logList=$("#logList"),
+      prioEl=$("#prio"), detailEl=$("#detail"),
+      teleModel=$("#teleModel"), teleMs=$("#teleMs"), teleN=$("#teleN"),
+      teleTtf=$("#teleTtf"), teleKb=$("#teleKb");
+
+/* ---------- persisted settings ---------- */
+const store = {
+  get(k,d){ try{ return localStorage.getItem(k) ?? d; }catch(e){ return d; } },
+  set(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+};
+keyEl.value    = store.get("te_key","");
+rateEl.value   = store.get("te_rate","1.4");
+prioEl.value   = store.get("te_prio","fast");
+detailEl.value = store.get("te_detail","384");
+rateVal.textContent = rateEl.value;
+
+detailEl.addEventListener("change", ()=> store.set("te_detail", detailEl.value));
+prioEl.addEventListener("change", ()=>{
+  store.set("te_prio", prioEl.value); store.set("te_model2","");   // let the new priority pick
+  MODEL = ""; discoverModels();
+});
+
+keyEl.addEventListener("change", ()=>{ store.set("te_key", keyEl.value.trim()); discoverModels(); });
+rateEl.addEventListener("input", ()=>{ rateVal.textContent = rateEl.value; store.set("te_rate", rateEl.value); });
+modelEl.addEventListener("change", ()=>{ MODEL = modelEl.value; store.set("te_model2", MODEL); stamp(); });
+
+/* ---------- speech out ---------- */
+let voice = null;
+function pickVoice(){
+  const vs = speechSynthesis.getVoices();
+  voice = vs.find(v=>/en-(GB|US|IN)/.test(v.lang)) || vs.find(v=>v.lang.startsWith("en")) || null;
+}
+pickVoice(); speechSynthesis.onvoiceschanged = pickVoice;
+
+// queue=true appends instead of interrupting, so a streamed answer is spoken
+// clause by clause as it arrives rather than waiting for the whole thing.
+function speak(text, queue=false){
+  if(!text) return;
+  if(!queue) speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = parseFloat(rateEl.value) || 1.4;
+  if(voice) u.voice = voice;
+  speechSynthesis.speak(u);
+}
+function show(text, quiet=false){
+  sayEl.textContent = text;
+  sayEl.classList.toggle("quiet", quiet);
+}
+
+/* Readings stay on screen so they can be replayed — a spoken answer is gone the
+   moment it finishes, and asking the model again costs another request. */
+function logRead(text, ms){
+  if(logList.firstElementChild?.classList.contains("empty")) logList.innerHTML = "";
+  const li = document.createElement("li");
+  li.tabIndex = 0;
+  li.innerHTML = `<time></time><p></p><span class="ms">${ms} ms</span>`;
+  li.querySelector("time").textContent =
+    new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+  li.querySelector("p").textContent = text;
+  const replay = e => { e.stopPropagation(); speak(text); };
+  li.addEventListener("click", replay);
+  li.addEventListener("keydown", e => {
+    if(e.code === "Enter" || e.code === "Space"){ e.preventDefault(); replay(e); }
+  });
+  logList.prepend(li);
+  while(logList.children.length > 8) logList.lastElementChild.remove();
+}
+
+/* ---------- camera ---------- */
+let stream = null;
+
+function stopStream(){
+  if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+}
+
+async function startCamera(deviceId){
+  stopStream();
+  liveDot.hidden = true;
+  const video = deviceId
+    ? { deviceId:{exact:deviceId}, width:{ideal:1280}, height:{ideal:720} }
+    : { facingMode:{ideal:"environment"}, width:{ideal:1280}, height:{ideal:720} };
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({ video, audio:false });
+    camEl.srcObject = stream;
+    liveDot.hidden = false;
+    camEl.addEventListener("loadedmetadata", ()=>{
+      dimsEl.textContent = `${camEl.videoWidth}×${camEl.videoHeight}`;
+    }, {once:true});
+    await listCameras();               // labels only exist once permission is granted
+  }catch(err){
+    if(deviceId){                      // remembered camera is gone — fall back once
+      store.set("te_cam","");
+      camSel.value = "";
+      show("That camera isn't available — switched back to the default.", true);
+      return startCamera(null);
+    }
+    show("No camera. Allow camera access, and make sure the page is on https:// or localhost.", true);
+  }
+}
+
+async function listCameras(){
+  try{
+    const cams = (await navigator.mediaDevices.enumerateDevices())
+                   .filter(d => d.kind === "videoinput");
+    const active = stream?.getVideoTracks()[0]?.getSettings().deviceId || "";
+    camSel.innerHTML = cams.length
+      ? cams.map((d,i) => {
+          const label = (d.label || `Camera ${i+1}`).replace(/[<>&]/g,"");
+          return `<option value="${d.deviceId}">${label}</option>`;
+        }).join("")
+      : `<option value="">no camera found</option>`;
+    if(cams.some(d => d.deviceId === active)) camSel.value = active;
+  }catch(e){ /* enumeration blocked — keep whatever is in the list */ }
+}
+
+camSel.addEventListener("change", ()=>{
+  store.set("te_cam", camSel.value);
+  startCamera(camSel.value || null);
+});
+camRef.addEventListener("click", async ()=>{
+  await listCameras();
+  show(`${camSel.options.length} camera(s) found.`, true);
+});
+// A Wi-Fi/virtual camera that connects later shows up here without a reload.
+navigator.mediaDevices?.addEventListener?.("devicechange", listCameras);
+
+startCamera(store.get("te_cam","") || null);
+
+/* Capture matches the portrait preview exactly — what you see is what the model gets.
+   A 9:16 column is also the right crop for walking: ground to head height, no wasted sides. */
+function grabFrame(){
+  const vw = camEl.videoWidth, vh = camEl.videoHeight;
+  if(!vw || !vh) return null;
+  const maxH = parseInt(detailEl.value, 10) || 384;
+  const AR = 9/16;
+  let sw = vh*AR, sh = vh;
+  if(sw > vw){ sw = vw; sh = vw/AR; }
+  const sx = (vw-sw)/2, sy = (vh-sh)/2;
+  const k = Math.min(1, maxH/sh);
+  const c = document.createElement("canvas");
+  c.width = Math.round(sw*k); c.height = Math.round(sh*k);
+  c.getContext("2d").drawImage(camEl, sx, sy, sw, sh, 0, 0, c.width, c.height);
+  // q0.6 — a navigation cue survives heavy compression; every KB is upload time.
+  const b64 = c.toDataURL("image/jpeg", 0.6).split(",")[1];
+  teleKb.textContent = Math.round(b64.length*0.75/1024) + " KB";
+  return b64;
+}
+
+/* ---------- model discovery (self-heals against changing model IDs) ---------- */
+// Gemma first — this is a Gemma track. Gemini stays available as a fallback only.
+// Smallest capable vision model first: a 4B saying "kerb ahead, two steps" in 2s is
+// worth far more to someone walking than a 31B saying it beautifully in 40s.
+const GEMMA_FAST = ["gemma-3-4b-it","gemma-4-e2b-it","gemma-4-e4b-it","gemma-4-12b-it",
+                    "gemma-4-26b-a4b-it","gemma-3-12b-it","gemma-4-31b-it","gemma-3-27b-it"];
+const GEMMA_BEST = ["gemma-4-26b-a4b-it","gemma-4-31b-it","gemma-4-12b-it",
+                    "gemma-3-27b-it","gemma-3-12b-it","gemma-3-4b-it"];
+const GEMINI = ["gemini-3.5-flash-lite","gemini-3.8-flash","gemini-3.5-flash","gemini-flash-latest"];
+// te_model2: new key so a slow model pinned before the latency work is discarded once.
+let MODEL = store.get("te_model2",""), reads = 0;
+
+const isGemma = m => /^gemma/i.test(m||"");
+function stamp(ms){
+  const m = MODEL || modelEl.value || "—";
+  teleModel.textContent = m;
+  teleModel.className = isGemma(m) ? "ok" : "";
+  famEl.textContent = isGemma(m) ? "Gemma" : "Gemini";
+  if(ms !== undefined) teleMs.textContent = ms + " ms";
+  teleN.textContent = reads;
+}
+
+async function discoverModels(){
+  const key = keyEl.value.trim();
+  if(!key){ teleModel.textContent = "no key"; return; }
+  teleModel.textContent = "checking…";
+  try{
+    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}&pageSize=200`);
+    if(!r.ok) throw new Error(`${r.status}`);
+    const names = ((await r.json()).models||[])
+      .filter(m => (m.supportedGenerationMethods||[]).includes("generateContent"))
+      .map(m => m.name.replace(/^models\//,""));
+
+    const GEMMA = prioEl.value === "best" ? GEMMA_BEST : GEMMA_FAST;
+    const ranked = [
+      ...GEMMA.filter(p => names.includes(p)),
+      ...names.filter(n => /^gemma/i.test(n) && !GEMMA.includes(n)).sort(),
+      ...GEMINI.filter(p => names.includes(p)),
+      ...names.filter(n => /flash/.test(n) && !GEMINI.includes(n)).sort()
+    ];
+    if(!ranked.length) throw new Error("no usable models");
+    modelEl.innerHTML = ranked.map(n =>
+      `<option value="${n}">${isGemma(n) ? "★ "+n+"  (Gemma)" : n+"  (Gemini fallback)"}</option>`).join("");
+    MODEL = ranked.includes(MODEL) ? MODEL : ranked[0];
+    modelEl.value = MODEL;
+    stamp();
+    if(!ranked.some(isGemma))
+      show("Your key returned no Gemma models — only Gemini. Check Setup before you present.", true);
+    else if(sayEl.classList.contains("quiet"))
+      show("Ready. Press Describe, or hold the mic to ask anything.", true);
+  }catch(e){
+    teleModel.textContent = "key error";
+    show("Couldn't reach the API — check the key and your connection.", true);
+  }
+}
+discoverModels();
+
+/* ---------- prompt ---------- */
+const SYSTEM = [
+  "You are the eyes of a blind person walking, seeing one frame from a camera on their chest.",
+  "Report only what is actually visible, most urgent first.",
+  "RULES:",
+  "- 15 words MAXIMUM. Telegraphic. No preamble, no 'I see', no pleasantries, no full sentences.",
+  "- Put the single most urgent thing in the FIRST three words.",
+  "- Lead with anything in the walking path: obstacle, step, kerb, stairs, pole, vehicle, person.",
+  "- Give direction (left, ahead, right) and rough distance in steps or metres: 'about three steps'.",
+  "- State height when not on the ground (knee, waist, chest, head height) — a cane never finds those.",
+  "- Read large or important text verbatim in quotes.",
+  "- Never say it is safe, clear, or fine to walk or cross. Never give go or no-go advice. Describe only.",
+  "- Never claim something is absent; you may have missed it.",
+  "- If too dark or blurred to judge, reply exactly: Can't see clearly."
+].join("\n");
+
+// Hard guardrail: a hallucinated "path is clear" could put someone in traffic.
+const FORBIDDEN = /\b(it(?:'s| is) safe|safe to (?:walk|cross|go|proceed)|you can (?:cross|go|walk|proceed)|path is clear|all clear|nothing in your way|clear to (?:cross|go)|go ahead now)\b/i;
+function guard(text){
+  return FORBIDDEN.test(text)
+    ? text.replace(FORBIDDEN, "— I can't judge that").replace(/\s{2,}/g," ").trim()
+    : text;
+}
+
+/* ---------- the call ----------
+   Streamed over SSE and spoken clause by clause as tokens arrive. What a walking
+   person waits on is the first word, not the finished sentence — so "first word"
+   is the number that matters, and it lands long before "total". */
+let busy = false, inflight = null;
+
+async function ask(question){
+  const key = keyEl.value.trim();
+  if(!key){ show("Open Setup and paste your Google AI Studio API key first.", true); speak("Add your API key first."); return; }
+
+  if(inflight) inflight.abort();          // a new press supersedes the one in flight
+  const ctl = new AbortController(); inflight = ctl;
+
+  const b64 = grabFrame();
+  if(!b64){ show("Camera isn't ready yet.", true); return; }
+
+  busy = true; stage.classList.add("busy"); goBtn.disabled = true;
+  speechSynthesis.cancel();
+  show("Looking…", true);
+  teleTtf.textContent = "…"; teleMs.textContent = "…";
+
+  const t0 = performance.now();
+  const model = MODEL || modelEl.value;
+  const task = question
+    ? `The person asks: "${question}"\nAnswer from the image. Same rules, 15 words max.`
+    : `Describe what is ahead right now.`;
+
+  const body = JSON.stringify({
+    contents:[{ role:"user", parts:[
+      { inline_data:{ mime_type:"image/jpeg", data:b64 } },
+      { text: SYSTEM + "\n\n---\n\n" + task }
+    ]}],
+    generationConfig:{ temperature:0.1, topP:0.8, maxOutputTokens:48 }
+  });
+
+  let full = "", spoken = 0, ttf = 0;
+
+  // Speak each complete clause as it lands; force=true flushes the tail at the end.
+  const flush = force => {
+    const pending = full.slice(spoken);
+    if(!pending.trim()) return;
+    let cut = -1;
+    if(force) cut = pending.length;
+    else { const m = pending.match(/[.,!?;:\n](?=\s|$)/); if(m) cut = m.index + 1; }
+    if(cut > 0){
+      const chunk = pending.slice(0, cut).trim();
+      if(chunk){ speak(guard(chunk), spoken > 0); spoken += cut; }
+    }
+  };
+
+  try{
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`,
+      { method:"POST", headers:{"Content-Type":"application/json"}, body, signal:ctl.signal });
+
+    if(!r.ok){
+      const detail = await r.text().catch(()=> "");
+      throw new Error(r.status === 429 ? "Rate limited — wait, or drop Image detail to Low."
+                    : r.status === 400 ? "Request rejected. Try another model in Setup."
+                    : `HTTP ${r.status} ${detail.slice(0,140)}`);
+    }
+
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    for(;;){
+      const { done, value } = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, { stream:true });
+      const lines = buf.split("\n"); buf = lines.pop() ?? "";
+      for(const line of lines){
+        if(!line.startsWith("data:")) continue;
+        const raw = line.slice(5).trim();
+        if(!raw || raw === "[DONE]") continue;
+        let j; try{ j = JSON.parse(raw); }catch(e){ continue; }
+        const piece = (j.candidates?.[0]?.content?.parts || [])
+                        .map(p => p.text).filter(Boolean).join("");
+        if(!piece) continue;
+        if(!ttf){ ttf = Math.round(performance.now()-t0); teleTtf.textContent = ttf + " ms"; }
+        full += piece;
+        show(guard(full));
+        flush(false);
+      }
+    }
+    flush(true);
+
+    const ms = Math.round(performance.now()-t0);
+    reads++; stamp(ms);
+
+    const safe = guard(full.trim());
+    if(!safe){ show("No answer came back. Try again.", true); speak("No answer."); }
+    else { show(safe); logRead(safe, ms); }
+
+  }catch(err){
+    if(err.name === "AbortError") return;
+    show(err.message || "Something went wrong.", true);
+    speak("Something went wrong.");
+  }finally{
+    if(inflight === ctl) inflight = null;
+    busy = false; stage.classList.remove("busy"); goBtn.disabled = false;
+  }
+}
+
+/* ---------- controls ---------- */
+goBtn.addEventListener("click", ()=> ask(null));
+stage.addEventListener("click", ()=> ask(null));
+document.querySelectorAll(".chip[data-q]").forEach(b =>
+  b.addEventListener("click", ()=> ask(b.dataset.q)));
+
+/* ---------- voice question (push to talk) ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+if(!SR){
+  micBtn.disabled = true;
+  micBtn.textContent = "Voice n/a";
+}else{
+  const rec = new SR();
+  rec.lang = "en-IN"; rec.interimResults = false; rec.maxAlternatives = 1;
+  rec.onresult = e => {
+    const q = e.results[0][0].transcript;
+    show("“" + q + "”", true);
+    ask(q);
+  };
+  const reset = () => { micBtn.classList.remove("live"); micBtn.textContent = "Hold to ask"; };
+  rec.onerror = reset; rec.onend = reset;
+
+  micBtn.addEventListener("pointerdown", ev => {
+    ev.preventDefault();
+    speechSynthesis.cancel();
+    try{ rec.start(); micBtn.classList.add("live"); micBtn.textContent = "Listening…"; }catch(e){}
+  });
+  const stop = () => { try{ rec.stop(); }catch(e){} };
+  micBtn.addEventListener("pointerup", stop);
+  micBtn.addEventListener("pointerleave", stop);
+}
+
+// Space / Enter = describe, from anywhere that isn't a control.
+addEventListener("keydown", e=>{
+  if(e.target.matches("input,select,button,summary")) return;
+  if(e.code === "Space" || e.code === "Enter"){ e.preventDefault(); ask(null); }
+});
+</script>
+</body>
+</html>

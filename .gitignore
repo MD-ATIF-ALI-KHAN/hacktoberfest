@@ -1,0 +1,14 @@
+# local env / keys — never commit an API key
+.env
+.env.*
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# scratch
+*.log
+shot*.png
