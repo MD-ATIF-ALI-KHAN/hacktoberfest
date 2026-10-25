@@ -115,6 +115,10 @@ aside{display:flex;flex-direction:column;gap:11px;min-width:0}
      font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:#fff;
      background:rgba(0,0,0,.55);padding:4px 8px;border-radius:999px;backdrop-filter:blur(6px)}
 .dot i{width:6px;height:6px;border-radius:50%;background:var(--live);animation:pulse 1.6s infinite}
+.dot[hidden]{display:none}   /* display:flex would otherwise beat the hidden attribute */
+.dot.auto{left:auto;right:11px;background:rgba(240,180,87,.85);color:#1b1200;font-weight:700}
+.dot.auto i{background:#1b1200}
+#auto.on{background:var(--warn);color:#1b1200;border-color:var(--warn);font-weight:700}
 @keyframes pulse{50%{opacity:.25}}
 @media (prefers-reduced-motion:reduce){
   .stage.busy::after{animation:none;opacity:.22} .dot i{animation:none}
@@ -182,6 +186,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
       <button id="go">Describe what's ahead</button>
       <button id="mic">Hold to ask</button>
       <button id="repeat" title="Say the last reading again">&#9654; Repeat</button>
+      <button id="auto" title="Describe automatically while you walk">&#9679; Start auto</button>
     </div>
 
     <div class="chips">
@@ -213,6 +218,10 @@ input[type=range]{width:100%;accent-color:var(--accent)}
         <option value="512">Medium — 512px</option>
         <option value="768">High — 768px (slowest)</option>
       </select>
+      <label for="gate" style="display:flex;gap:9px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="gate" checked style="width:auto;accent-color:var(--accent)">
+        Only describe when the scene changes
+      </label>
       <label for="rate">Speech rate — <span id="rateVal">1.4</span>&times;</label>
       <input id="rate" type="range" min="0.8" max="3" step="0.1" value="1.4">
       <p class="note">One key covers both families: the key from <em>aistudio.google.com/apikey</em>
@@ -228,6 +237,7 @@ input[type=range]{width:100%;accent-color:var(--accent)}
     <div class="stage" id="stage">
       <video id="cam" playsinline autoplay muted></video>
       <span class="dot" id="livedot" hidden><i></i>LIVE</span>
+      <span class="dot auto" id="autodot" hidden><i></i>AUTO</span>
     </div>
     <div class="camrow">
       <select id="camsel" aria-label="Choose camera"><option value="">camera: default</option></select>
@@ -255,6 +265,7 @@ const camEl=$("#cam"), stage=$("#stage"), sayEl=$("#say"), liveDot=$("#livedot")
       prioEl=$("#prio"), detailEl=$("#detail"),
       verdictEl=$("#verdict"), adviceEl=$("#advice"),
       repeatBtn=$("#repeat"), teleVoice=$("#teleVoice"),
+      autoBtn=$("#auto"), autoDot=$("#autodot"), gateEl=$("#gate"),
       teleModel=$("#teleModel"), teleMs=$("#teleMs"), teleN=$("#teleN"),
       teleTtf=$("#teleTtf"), teleKb=$("#teleKb");
 
@@ -269,7 +280,10 @@ prioEl.value   = store.get("te_prio","fast");
 detailEl.value = store.get("te_detail","384");
 rateVal.textContent = rateEl.value;
 
+gateEl.checked = store.get("te_gate","1") === "1";
+
 detailEl.addEventListener("change", ()=> store.set("te_detail", detailEl.value));
+gateEl.addEventListener("change", ()=> store.set("te_gate", gateEl.checked ? "1" : "0"));
 prioEl.addEventListener("change", ()=>{
   store.set("te_prio", prioEl.value); store.set("te_model2","");   // let the new priority pick
   MODEL = ""; discoverModels();
@@ -454,6 +468,45 @@ function grabFrame(){
   return b64;
 }
 
+/* A 16x16 grayscale fingerprint of the frame. Standing still and re-describing
+   "flat pavement ahead" every 5 seconds is useless and burns quota, so auto mode
+   compares frames and skips the request when nothing has moved. */
+let lastFp = null;
+function fingerprint(){
+  const vw = camEl.videoWidth, vh = camEl.videoHeight;
+  if(!vw || !vh) return null;
+  const c = document.createElement("canvas"); c.width = 16; c.height = 16;
+  const x = c.getContext("2d", { willReadFrequently:true });
+  x.drawImage(camEl, 0, 0, 16, 16);
+  const d = x.getImageData(0, 0, 16, 16).data, g = new Uint8Array(256);
+  for(let i = 0; i < 256; i++)
+    g[i] = (d[i*4]*0.299 + d[i*4+1]*0.587 + d[i*4+2]*0.114) | 0;
+  return g;
+}
+function sceneChanged(fp){
+  if(!fp || !lastFp) return true;
+  let sum = 0;
+  for(let i = 0; i < fp.length; i++) sum += Math.abs(fp[i] - lastFp[i]);
+  return (sum / fp.length) > 6;          // mean absolute difference, 0-255 scale
+}
+
+// Let the current reading finish speaking before the next one starts, so auto mode
+// doesn't cut itself off mid-sentence. Capped, in case an utterance never ends.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// In auto mode this is the pacing mechanism, so the cap is generous — it exists only
+// so a stuck utterance can never freeze the loop, not to cut readings short.
+function drainSpeech(maxMs = 9000){
+  return new Promise(res => {
+    const t0 = performance.now();
+    const check = () => {
+      if(!speechSynthesis.speaking || performance.now() - t0 > maxMs) return res();
+      setTimeout(check, 120);
+    };
+    check();
+  });
+}
+
 /* ---------- model discovery (self-heals against changing model IDs) ---------- */
 // Gemma first — this is a Gemma track. Gemini stays available as a fallback only.
 // Smallest capable vision model first: a 4B saying "kerb ahead, two steps" in 2s is
@@ -513,54 +566,37 @@ discoverModels();
 
 /* ---------- prompt ---------- */
 const SYSTEM = [
-  "You are the eyes of a blind person walking, seeing one frame from a camera on their chest.",
+  "Eyes of a blind person walking. One frame from a camera on their chest.",
   "",
-  "Reply in EXACTLY this format. Three lines. Nothing before, nothing after:",
-  "ASSESS: <CLEAR|CAUTION|STOP>",
-  "SEE: <what is visible>",
-  "DO: <what to do>",
-  "",
-  "Worked examples — copy this style exactly:",
+  "Answer ONLY in this form. Three lines. No other words:",
+  "ASSESS: CLEAR or CAUTION or STOP",
+  "SEE: 12 words max, what is there, nearest first",
+  "DO: 8 words max, an instruction",
   "",
   "ASSESS: STOP",
   "SEE: metal pole ahead, two steps, chest height",
   "DO: stop, move left to pass",
   "",
   "ASSESS: CAUTION",
-  "SEE: three steps down ahead, handrail on right",
+  "SEE: three steps down ahead, handrail right",
   "DO: slow, find handrail, step down",
   "",
   "ASSESS: CLEAR",
-  "SEE: flat pavement, shop doorway on right",
+  "SEE: flat pavement, doorway on right",
   "DO: continue straight",
   "",
-  "NEVER begin with 'The image', 'This is', 'I can see', 'In this picture' or any caption.",
-  "You are not describing a photograph. You are telling a walking person what is in front of them.",
+  "STOP = obstacle within two steps, a drop-off, or stairs going down.",
+  "CAUTION = something near the path, or you cannot see well.",
+  "CLEAR = nothing in the walking column.",
+  "Give direction and distance in steps. Give height band if off the ground.",
+  "Never say something is absent; you may have missed it.",
   "",
-  "ASSESS:",
-  "- STOP — obstacle within about two steps, a drop-off, stairs going down, or anything in the path.",
-  "- CAUTION — something in or near the path but there is room to pass, or you cannot see well.",
-  "- CLEAR — nothing in the walking column that you can see.",
-  "- Judge ONLY the walking surface visible in THIS frame.",
+  "Road, kerb, crossing or any vehicle in view: never CLEAR, and",
+  "DO: wait, you need a person to help you cross",
   "",
-  "SEE:",
-  "- Telegraphic. No preamble, no 'I see'. Most urgent thing in the first three words.",
-  "- Direction (left, ahead, right) and rough distance in steps: 'about three steps'.",
-  "- Height band when not on the ground (knee, waist, chest, head) — a cane never finds those.",
-  "- Read large or important text verbatim in quotes.",
-  "- Never claim something is absent; you may simply have missed it.",
+  "Too dark or blurred: ASSESS: CAUTION / SEE: cannot see clearly / DO: stop, try again",
   "",
-  "DO:",
-  "- Concrete and physical: 'move left to pass', 'stop, step down', 'continue, keep right'.",
-  "- Advise only about fixed things you can see: obstacles, steps, kerbs, gaps, doors.",
-  "",
-  "TRAFFIC — absolute:",
-  "- If the frame shows a road, kerb, crossing, or ANY vehicle, ASSESS is CAUTION or STOP, never CLEAR,",
-  "  and DO must be exactly: wait, you need a person to help you cross.",
-  "- You cannot judge traffic. A vehicle outside this frame reaches the person in seconds.",
-  "- Never state that traffic is clear, that there are no cars, or that crossing is possible.",
-  "",
-  "If too dark or blurred: ASSESS: CAUTION / SEE: can't see clearly / DO: stop, try again."
+  "Do not explain. Do not restate the task. Do not mention the image or the user."
 ].join("\n");
 
 /* The model may advise on fixed obstacles — that is the point of DO. What it must never
@@ -574,17 +610,32 @@ function guard(text){
     : text;
 }
 
+/* Last-resort cleanup for a model that narrates instead of answering ("the user wants
+   me to describe..."). The prefill turn should make this unreachable; it exists because
+   Gemma 4 26B does this and Flash does not, and silence is better than a monologue.
+   Applied repeatedly, since the waffle often stacks: "Okay, so the image shows a ...". */
+const META = /^\s*(the image (is|shows)|this (is|shows)|i can see|i see|in (this|the) (picture|image)|the (picture|photo) shows|the user (wants|is asking|asked)|(you )?want(s)? me to|okay[,.]?\s*(so|let)?|let me|i need to|i will|i should|i'?m going to|me to|describe|analyz(e|ing)|based on (the )?image|here(.s| is) (the|my))\b[\s:,.-]*(an?\s+|the\s+)?(close[- ]?ups?\s+(of\s+)?(an?\s+)?)?/i;
+function stripMeta(s){
+  let out = s;
+  for(let i = 0; i < 4; i++){
+    const next = out.replace(META, "");
+    if(next === out || !next.trim()) break;
+    out = next;
+  }
+  return out.trim();
+}
+
 /* ---------- the call ----------
    Streamed over SSE and spoken clause by clause as tokens arrive. What a walking
    person waits on is the first word, not the finished sentence — so "first word"
    is the number that matters, and it lands long before "total". */
-let busy = false, inflight = null;
+let busy = false, inflight = null, askFailed = false;
 
 async function ask(question){
   const key = keyEl.value.trim();
   if(!key){ show("Open Setup and paste your Google AI Studio API key first.", true); speak("Add your API key first."); return; }
 
-  shutUp(); primeSpeech(); lastSpoken = "";   // must run inside the click, before any await
+  shutUp(); primeSpeech(); lastSpoken = ""; askFailed = false;   // before any await
   if(inflight) inflight.abort();          // a new press supersedes the one in flight
   const ctl = new AbortController(); inflight = ctl;
 
@@ -602,15 +653,22 @@ async function ask(question){
     ? `The person asks: "${question}"\nAnswer from the image. Same rules, 15 words max.`
     : `Describe what is ahead right now.`;
 
+  /* Prefill: the last turn is the model's own, already opened with "ASSESS:". Generation
+     continues from there, so it physically cannot emit a preamble like "the user wants me
+     to describe..." — Gemma restates the task without this; Flash does not need it. */
   const body = JSON.stringify({
-    contents:[{ role:"user", parts:[
-      { inline_data:{ mime_type:"image/jpeg", data:b64 } },
-      { text: SYSTEM + "\n\n---\n\n" + task }
-    ]}],
-    generationConfig:{ temperature:0.1, topP:0.8, maxOutputTokens:140, stopSequences:["\n\n"] }
+    contents:[
+      { role:"user",  parts:[
+        { inline_data:{ mime_type:"image/jpeg", data:b64 } },
+        { text: SYSTEM + "\n\n---\n\n" + task }
+      ]},
+      { role:"model", parts:[{ text: "ASSESS:" }] }
+    ],
+    generationConfig:{ temperature:0.1, topP:0.8, maxOutputTokens:120, stopSequences:["\n\n","---"] }
   });
 
-  let full = "", done = 0, ttf = 0, seen = "", advice = "", truncated = false;
+  // Seeded with the prefill, since the model continues that text rather than repeating it.
+  let full = "ASSESS:", done = 0, ttf = 0, seen = "", advice = "", truncated = false;
 
   // Speak each line the moment it completes. ASSESS is the first and shortest line,
   // so the one word that matters most reaches the user soonest.
@@ -631,9 +689,8 @@ async function ask(question){
       }else if(key === "DO"){
         advice = val; setAdvice(val); speak(val); rememberSpoken(val);
       }else{
-        // Model ignored the format and wrote a caption — strip the opener, still speak it.
-        const clean = val.replace(
-          /^\s*(the image (is|shows)|this (is|shows)|i can see|i see|in (this|the) (picture|image)|the (picture|photo) shows)\b[\s:,-]*(an?\s+)?(close[- ]?ups?\s+(of\s+)?(an?\s+)?)?/i, "");
+        // Model ignored the format and wrote prose — strip the waffle, still speak it.
+        const clean = stripMeta(val);
         seen = clean || val; show(seen); speak(seen); rememberSpoken(seen);
       }
     }
@@ -688,6 +745,7 @@ async function ask(question){
 
   }catch(err){
     if(err.name === "AbortError") return;
+    askFailed = true;
     show(err.message || "Something went wrong.", true);
     speak("Something went wrong.");
   }finally{
@@ -703,6 +761,69 @@ stage.addEventListener("click", ()=> ask(null));
 /* Repeat is also the speech diagnostic: it speaks straight from the click, with no
    await in between, so if this works and the automatic speech does not, the problem
    is the gesture context and not the voices. */
+/* ---------- auto mode ----------
+   A continuous loop, not a timer. The next frame is captured as soon as the previous
+   reading has finished being spoken, so there is no dead air between readings and no
+   chance of a slow reading stacking requests on top of each other. */
+let autoOn = false, looping = false, autoCount = 0, autoFails = 0;
+const AUTO_MAX = 240;                   // a forgotten tab stops itself
+
+function setAuto(on){
+  autoOn = on;
+  autoBtn.innerHTML = on ? "&#9632; Stop auto" : "&#9679; Start auto";
+  autoBtn.classList.toggle("on", on);
+  autoDot.hidden = !on;
+  if(on){
+    autoCount = 0; autoFails = 0; lastFp = null;
+    primeSpeech();                      // runs inside the click, keeps speech alive
+    speak("Auto on.");
+    loop();
+  }else{
+    shutUp();
+    setVerdict("READY"); setAdvice("");
+    show("Auto mode stopped.", true);
+  }
+}
+
+async function loop(){
+  if(looping) return;                   // never run two loops at once
+  looping = true;
+  try{
+    while(autoOn){
+      if(!keyEl.value.trim()){          // otherwise it would spin silently forever
+        speak("Add your API key first."); setAuto(false); break;
+      }
+
+      const fp = fingerprint();
+      if(gateEl.checked && !sceneChanged(fp)){
+        setVerdict("UNCHANGED");
+        await sleep(400);               // cheap poll, costs no request
+        continue;
+      }
+      lastFp = fp;
+      autoCount++;
+
+      await ask(null);
+      await drainSpeech();              // the next reading starts when this one stops
+
+      if(askFailed){
+        if(++autoFails >= 3){
+          speak("Auto mode stopped after repeated errors."); setAuto(false); break;
+        }
+        await sleep(1500);              // back off before retrying a failing endpoint
+      }else autoFails = 0;
+
+      if(autoCount >= AUTO_MAX){
+        speak("Auto mode stopped after " + AUTO_MAX + " readings."); setAuto(false); break;
+      }
+      await sleep(250);                 // floor, so a fast-failing call can't run away
+    }
+  }finally{ looping = false; }
+}
+
+autoBtn.addEventListener("click", ()=> setAuto(!autoOn));
+addEventListener("keydown", e => { if(e.code === "Escape" && autoOn) setAuto(false); });
+
 repeatBtn.addEventListener("click", ()=>{
   shutUp(); primeSpeech();
   const text = lastSpoken

@@ -6,6 +6,8 @@ A camera assistant that tells a blind user what's ahead, judges whether the path
 walkable, and says what to do about it — out loud, powered by **Gemma** multimodal
 vision through the Google AI Studio API.
 
+![Third Eye interface](docs/screenshot.png)
+
 ---
 
 ## The problem
@@ -38,10 +40,32 @@ sees, or tap a preset.
 | Action | Result |
 |---|---|
 | **Describe what's ahead** / tap the camera / `Space` | One-shot verdict, description and advice |
+| **Start auto** | Continuous hands-free readings while you walk — see below |
 | **Hold to ask** | Push-to-talk; ask anything about the current view |
+| **Repeat** / `R` | Say the last reading again |
+| `Escape` | Stop auto mode |
 | Quick presets | Read the text · What's in my path · Find the door · Steps or stairs |
 | Recent readings | Tap any past reading to hear it again — no extra API call |
 | Camera panel | Switch cameras; **Rescan** picks up a Wi-Fi or virtual camera |
+
+## Auto mode
+
+Pressing a button for every reading defeats the point for someone walking, so auto mode
+runs continuously. It is **a loop, not a timer**: the next frame is captured the moment
+the previous reading has finished being spoken. No dead air waiting out an interval, and
+no possibility of a slow reading stacking requests behind it. The rhythm self-adjusts —
+a short `CLEAR / flat pavement / continue straight` comes round quickly, a longer one
+takes longer.
+
+Standing still would otherwise mean hearing "flat pavement ahead" over and over while
+burning quota, so each frame is reduced to a **16×16 grayscale fingerprint** and compared
+with the last one sent. Below a mean-absolute-difference threshold the request is skipped
+entirely and the verdict shows `UNCHANGED`. Measured: sensor noise scores ~2, a real scene
+change ~54, threshold 6.
+
+A loop with no delay needs rails, so it also carries a 250 ms floor between iterations, a
+1.5 s backoff that gives up after three consecutive errors, and a hard stop at 240
+readings — a forgotten tab cannot drain an API quota overnight.
 
 ## Why Gemma
 
@@ -59,9 +83,11 @@ the entire premise of this project.
 
 ```mermaid
 flowchart TD
-    CAM["Camera<br/>getUserMedia"] --> CROP["Portrait crop 9:16<br/>384px · JPEG q0.6 · ~15 KB"]
+    CAM["Camera<br/>getUserMedia"] --> GATE{"Scene changed?<br/>16x16 fingerprint"}
+    GATE -- "no" --> SKIP["UNCHANGED<br/>no request spent"]
+    GATE -- "yes" --> CROP["Portrait crop 9:16<br/>384px · JPEG q0.6 · ~15 KB"]
     MIC["Hold to ask<br/>SpeechRecognition"] --> REQ
-    CROP --> REQ["Request body<br/>image + three-line contract"]
+    CROP --> REQ["user turn: image + contract<br/>model turn prefilled with 'ASSESS:'"]
     REQ --> API[["POST streamGenerateContent (SSE)"]]
     API --> GEMMA{{"GEMMA vision<br/>Google AI Studio"}}
     GEMMA -. "token stream" .-> PARSE["Line parser<br/>ASSESS → SEE → DO"]
@@ -74,13 +100,20 @@ flowchart TD
     SEEN --> TTS
     ADVICE --> TTS
     TTS --> EAR(["User hears 'Stop.' in ~1 s"])
+    EAR -. "auto mode: loop once speech ends" .-> CAM
+    SKIP -. .-> CAM
 ```
 
-Two details carry most of the design:
+Three details carry most of the design:
 
 - **The verdict is the first line of the response**, and the stream is parsed line by
   line — so the one word that matters is spoken while the explanation is still
   generating.
+- **The final turn in the request is the model's own, prefilled with `ASSESS:`.**
+  Generation continues that text rather than starting a fresh reply, so the model cannot
+  open with "the user wants me to describe this image". Gemma does that without the
+  prefill; Gemini Flash does not need it. The prompt itself is deliberately short — long
+  rule-lists are what invite a model to restate the task instead of answering.
 - **The traffic guard sits after the model, not inside it.** A prompt is a request; this
   needs to be a requirement.
 
